@@ -1,7 +1,7 @@
 {
   "name": "node-hid",
   "description": "USB HID device access library",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "author": "Hans Hübner <hans.huebner@gmail.com> (https://github.com/hanshuebner)",
   "bugs": "https://github.com/node-hid/node-hid/issues",
   "homepage": "https://github.com/node-hid/node-hid#readme",
@@ -18,10 +18,16 @@
     "test": "node src/test-ci.js",
     "showdevices": "node src/show-devices.js",
     "prepublishOnly": "git submodule update --init",
-    "install": "prebuild-install --runtime napi || node-gyp rebuild",
-    "prebuild": "prebuild --runtime napi --all --verbose --include-regex \"HID.*node$\"",
-    "prebuild-upload": "prebuild --runtime napi --upload-all",
-    "prebuild-ci": "prebuild-ci",
+    "install": "node-gyp-build",
+    "prebuild": "prebuildify --napi --strip",
+    "prebuild-darwin": "prebuildify --napi --arch x64+arm64",
+    "prebuild-win32-x86": "prebuildify --napi --strip",
+    "prebuild-win32-x64": "prebuildify --napi --strip",
+    "prebuild-linux-x86": "prebuildify-cross -i ghcr.io/node-usb/linux-x86 --napi --strip",
+    "prebuild-linux-x64": "prebuildify-cross -i ghcr.io/node-usb/centos7-devtoolset7 -i ghcr.io/node-usb/alpine --napi --strip --tag-libc",
+    "prebuild-linux-arm": "prebuildify-cross -i ghcr.io/node-usb/linux-arm64 -i ghcr.io/node-usb/linux-armv7 -i ghcr.io/node-usb/linux-armv6 --napi --strip --tag-armv",
+    "prebuild-android-arm": "prebuildify-cross -i ghcr.io/node-usb/android-arm64 -i ghcr.io/node-usb/android-armv7 --napi --strip --tag-armv",
+    "prebuild-download": "prebuildify-ci download",
     "gypclean": "node-gyp clean",
     "gypconfigure": "node-gyp configure",
     "gypbuild": "node-gyp build",
@@ -39,16 +45,16 @@
     ]
   },
   "engines": {
-    "node": ">=10"
+    "node": ">=10.16.0"
   },
   "license": "(MIT OR X11)",
   "dependencies": {
-    "bindings": "^1.5.0",
     "node-addon-api": "^3.0.2",
-    "prebuild-install": "^6.0.0"
+    "node-gyp-build": "^4.3.0"
   },
   "devDependencies": {
-    "prebuild": "^10.0.1",
+    "prebuildify": "^5.0.0",
+    "prebuildify-ci": "^1.0.5",
     "rimraf": "^2.6.2"
   },
   "gypfile": true

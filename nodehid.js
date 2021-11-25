@@ -16,13 +16,18 @@ function loadBinding() {
         if( os.platform() === 'linux' ) {
             // Linux defaults to hidraw
             if( !driverType || driverType === 'hidraw' ) {
+                // binding = require('bindings')('HID_hidraw.node');
                 binding = require('bindings')('HID_hidraw.node');
             } else {
-                binding = require('bindings')('HID.node');
+                binding = require('node-gyp-build')(__dirname)
+                // binding = require('bindings')('HID.node');
             }
         }
         else {
-            binding = require('bindings')('HID.node');
+            // binding = require('bindings')('HID.node');
+            console.log("dirname:",__dirname)
+            binding = require('node-gyp-build')(__dirname)
+            console.log("binding:",binding)
         }
     }
 }
