@@ -55,7 +55,6 @@
                     'msvs_settings': {
                         'VCCLCompilerTool': {
                             'ExceptionHandling': '2', # /EHsc
-                            'AdditionalOptions': ['/std:c++17'],
                             'DisableSpecificWarnings': [ '4290', '4530', '4267' ],
                         },
                         'VCLinkerTool': {
