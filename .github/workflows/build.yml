@@ -48,23 +48,23 @@ jobs:
             arch: x64
             is-native: true
             docker-arch: linux/amd64
-            docker-image: node:14-buster
+            docker-image: node:16-buster
           - os: ubuntu-24.04-arm
             arch: arm64
             is-native: true
             docker-arch: linux/arm64
-            docker-image: node:14-buster
+            docker-image: node:16-buster
           - os: ubuntu-24.04-arm
             arch: arm
             is-native: false
             docker-arch: linux/arm/v7
-            docker-image: node:14-buster
+            docker-image: node:16-buster
           # linux musl/alpine
           - os: ubuntu-latest
             arch: x64
             is-native: true
             docker-arch: linux/amd64
-            docker-image: node:14-alpine
+            docker-image: node:16-alpine
             libc: musl
 
     steps:
