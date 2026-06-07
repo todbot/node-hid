@@ -39,7 +39,7 @@
   },
   "license": "(MIT OR X11)",
   "dependencies": {
-    "node-addon-api": "^3.2.1",
+    "node-addon-api": "^8.8.0",
     "pkg-prebuilds": "^1.0.0"
   },
   "devDependencies": {
