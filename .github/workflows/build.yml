@@ -24,18 +24,20 @@ jobs:
       matrix:
         include:
           # windows
+          # node 22 is the newest that still ships 32-bit Windows (needed for the ia32 node.lib);
+          # its bundled node-gyp is too old for Visual Studio 2026, so npm is upgraded below
           - os: windows-latest
             arch: x64
             is-native: true
-            node-version: 24.x # node-gyp 12.1+ is needed to detect Visual Studio 2026
+            node-version: 22.x
           - os: windows-latest
             arch: ia32
             is-native: false
-            node-version: 24.x # node-gyp 12.1+ is needed to detect Visual Studio 2026
+            node-version: 22.x
           - os: windows-11-arm
             arch: arm64
             is-native: true
-            node-version: 24.x # node-gyp 12.1+ is needed to detect Visual Studio 2026
+            node-version: 22.x
           # macos
           - os: macos-latest
             arch: arm64
@@ -91,6 +93,13 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version || '16.x' }}
+
+      - name: Update npm
+        # node 22's bundled npm has a node-gyp too old to detect Visual Studio 2026 (v18);
+        # upgrading npm brings a new enough bundled node-gyp (>=12.1)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: npm install --global npm@latest
 
       - name: rebuild
         if: ${{ !matrix.docker-arch }}
