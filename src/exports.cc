@@ -10,6 +10,9 @@ static void
 deinitialize(void *ptr)
 {
     auto ptr2 = static_cast<ContextState *>(ptr);
+
+    ptr2->DrainAllQueues();
+
     delete ptr2;
 }
 

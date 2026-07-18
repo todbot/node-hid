@@ -7,6 +7,9 @@ bool parseDevicesParameters(const Napi::CallbackInfo &info, int *vendorId, int *
     case 0:
         return true;
     case 2:
+        if (!info[0].IsNumber() || !info[1].IsNumber())
+            return false;
+
         *vendorId = info[0].As<Napi::Number>().Int32Value();
         *productId = info[1].As<Napi::Number>().Int32Value();
         return true;
@@ -130,7 +133,7 @@ public:
 private:
     int vendorId;
     int productId;
-    hid_device_info *devs;
+    hid_device_info *devs = nullptr;
 };
 
 Napi::Value devicesAsync(const Napi::CallbackInfo &info)

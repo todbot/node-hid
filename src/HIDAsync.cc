@@ -38,7 +38,7 @@ HIDAsync::HIDAsync(const Napi::CallbackInfo &info)
 {
   Napi::Env env = info.Env();
 
-  if (info.Length() != 1 || !info[0].IsExternal())
+  if (info.Length() != 2 || !info[0].IsExternal() || !info[1].IsExternal())
   {
     Napi::TypeError::New(env, "HIDAsync constructor is not supported").ThrowAsJavaScriptException();
     return;
@@ -52,8 +52,12 @@ HIDAsync::HIDAsync(const Napi::CallbackInfo &info)
   }
 
   auto ptr = info[0].As<Napi::External<hid_device>>().Data();
+  auto contextState = info[1].As<Napi::External<ContextState>>().Data();
   _hidHandle = std::make_shared<DeviceContext>(appCtx, ptr);
   read_state = nullptr;
+
+  // Register with the env context, so the device job queue gets drained at env teardown
+  contextState->RegisterDevice(_hidHandle);
 }
 
 class CloseWorker : public PromiseAsyncWorker<std::shared_ptr<DeviceContext>>
@@ -108,9 +112,10 @@ void HIDAsync::closeHandle()
 class OpenByPathWorker : public PromiseAsyncWorker<ContextState *>
 {
 public:
-  OpenByPathWorker(const Napi::Env &env, ContextState *context, std::string path)
+  OpenByPathWorker(const Napi::Env &env, ContextState *context, std::string path, bool nonExclusive)
       : PromiseAsyncWorker(env, context),
-        path(path) {}
+        path(path),
+        nonExclusive(nonExclusive) {}
 
   ~OpenByPathWorker()
   {
@@ -126,6 +131,13 @@ public:
   void Execute() override
   {
     std::unique_lock<std::mutex> lock(context->appCtx->enumerateLock);
+#if defined(__APPLE__)
+    // The exclusivity flag is process-global, so it must be applied while holding
+    // the lock that serializes all open calls
+    hid_darwin_set_open_exclusive(nonExclusive ? 0 : 1);
+#else
+    (void)nonExclusive;
+#endif
     dev = hid_open_path(path.c_str());
     if (!dev)
     {
@@ -138,23 +150,25 @@ public:
   Napi::Value GetPromiseResult(const Napi::Env &env) override
   {
     auto ptr = Napi::External<hid_device>::New(env, dev);
-    dev = nullptr; // devs has already been freed
-    return context->asyncCtor.New({ptr});
+    dev = nullptr; // ownership is passed to the HIDAsync instance
+    return context->asyncCtor.New({ptr, Napi::External<ContextState>::New(env, context)});
   }
 
 private:
   std::string path;
-  hid_device *dev;
+  bool nonExclusive;
+  hid_device *dev = nullptr;
 };
 
 class OpenByUsbIdsWorker : public PromiseAsyncWorker<ContextState *>
 {
 public:
-  OpenByUsbIdsWorker(const Napi::Env &env, ContextState *context, int vendorId, int productId, std::string serial)
+  OpenByUsbIdsWorker(const Napi::Env &env, ContextState *context, int vendorId, int productId, std::string serial, bool nonExclusive)
       : PromiseAsyncWorker(env, context),
         vendorId(vendorId),
         productId(productId),
-        serial(serial) {}
+        serial(serial),
+        nonExclusive(nonExclusive) {}
 
   ~OpenByUsbIdsWorker()
   {
@@ -170,6 +184,11 @@ public:
   void Execute() override
   {
     std::unique_lock<std::mutex> lock(context->appCtx->enumerateLock);
+#if defined(__APPLE__)
+    hid_darwin_set_open_exclusive(nonExclusive ? 0 : 1);
+#else
+    (void)nonExclusive;
+#endif
 
     std::wstring wserialstr;
     const wchar_t *wserialptr = nullptr;
@@ -191,15 +210,16 @@ public:
   Napi::Value GetPromiseResult(const Napi::Env &env) override
   {
     auto ptr = Napi::External<hid_device>::New(env, dev);
-    dev = nullptr; // devs has already been freed
-    return context->asyncCtor.New({ptr});
+    dev = nullptr; // ownership is passed to the HIDAsync instance
+    return context->asyncCtor.New({ptr, Napi::External<ContextState>::New(env, context)});
   }
 
 private:
   int vendorId;
   int productId;
   std::string serial;
-  hid_device *dev;
+  bool nonExclusive;
+  hid_device *dev = nullptr;
 };
 
 Napi::Value HIDAsync::Create(const Napi::CallbackInfo &info)
@@ -239,10 +259,6 @@ Napi::Value HIDAsync::Create(const Napi::CallbackInfo &info)
         return env.Null();
       }
       isNonExclusiveBool = isNonExclusiveMode.As<Napi::Boolean>().Value();
-      hid_darwin_set_open_exclusive(isNonExclusiveBool ? 0 : 1);
-#else
-      // silence unused variable warning
-      (void)isNonExclusiveBool;
 #endif
     }
   }
@@ -258,7 +274,7 @@ Napi::Value HIDAsync::Create(const Napi::CallbackInfo &info)
 
     std::string path = info[0].As<Napi::String>().Utf8Value();
 
-    return (new OpenByPathWorker(env, context, path))->QueueAndRun();
+    return (new OpenByPathWorker(env, context, path, isNonExclusiveBool))->QueueAndRun();
   }
   else
   {
@@ -283,7 +299,7 @@ Napi::Value HIDAsync::Create(const Napi::CallbackInfo &info)
     int32_t vendorId = info[0].As<Napi::Number>().Int32Value();
     int32_t productId = info[1].As<Napi::Number>().Int32Value();
 
-    return (new OpenByUsbIdsWorker(env, context, vendorId, productId, serial))->QueueAndRun();
+    return (new OpenByUsbIdsWorker(env, context, vendorId, productId, serial, isNonExclusiveBool))->QueueAndRun();
   }
 }
 
@@ -291,9 +307,15 @@ Napi::Value HIDAsync::readStart(const Napi::CallbackInfo &info)
 {
   Napi::Env env = info.Env();
 
-  if (_hidHandle->is_closed)
+  if (!_hidHandle || _hidHandle->is_closed)
   {
     Napi::TypeError::New(env, "device has been closed").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  if (info.Length() < 1 || !info[0].IsFunction())
+  {
+    Napi::TypeError::New(env, "readStart requires a callback function").ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -348,15 +370,15 @@ Napi::Value HIDAsync::readStop(const Napi::CallbackInfo &info)
 {
   Napi::Env env = info.Env();
 
-  if (!read_state || !read_state->is_running())
+  if (!_hidHandle || !read_state || !read_state->is_running())
   {
     // Napi::TypeError::New(env, "device has been closed").ThrowAsJavaScriptException();
     return env.Null();
   }
 
-  auto result = (new ReadStopWorker(env, std::move(_hidHandle), std::move(read_state)))->QueueAndRun();
+  auto result = (new ReadStopWorker(env, _hidHandle, std::move(read_state)))->QueueAndRun();
 
-  // Ownership is transferred to ReadStopWorker
+  // Ownership of read_state is transferred to ReadStopWorker
   read_state = nullptr;
 
   return result;
@@ -417,7 +439,7 @@ public:
 
 private:
   int returnedLength = 0;
-  unsigned char *buffer;
+  unsigned char *buffer = nullptr;
   int _timeout;
 };
 
@@ -781,7 +803,7 @@ public:
 
 private:
   // this is owned by context->hid
-  hid_device_info *dev;
+  hid_device_info *dev = nullptr;
 };
 Napi::Value HIDAsync::getDeviceInfo(const Napi::CallbackInfo &info)
 {

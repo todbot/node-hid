@@ -226,7 +226,7 @@ function showdevices() {
     return binding.devices.apply(HID,arguments);
 }
 
-function showdevicesAsync(...args) {
+async function showdevicesAsync(...args) {
     loadBinding();
     return binding.devicesAsync(...args);
 }

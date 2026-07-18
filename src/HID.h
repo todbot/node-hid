@@ -12,7 +12,7 @@ public:
     HID(const Napi::CallbackInfo &info);
     ~HID() { closeHandle(); }
 
-    hid_device *_hidHandle;
+    hid_device *_hidHandle = nullptr;
 
     std::atomic<bool> _readRunning = {false};
     std::atomic<bool> _readInterrupt = {false};

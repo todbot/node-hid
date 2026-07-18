@@ -1,4 +1,5 @@
 #include <sstream>
+#include <algorithm>
 
 #include "util.h"
 
@@ -10,6 +11,12 @@ ApplicationContext::~ApplicationContext()
 {
     // Make sure we dont try to aquire it or run init at the same time
     std::unique_lock<std::mutex> lock(lockApplicationContext);
+
+    // Another thread may have re-created a context (and re-run hid_init) between our
+    // refcount hitting zero and this destructor acquiring the lock. In that case the
+    // newer context owns the eventual hid_exit and we must not tear down under it
+    if (!weakApplicationContext.expired())
+        return;
 
     if (hid_exit())
     {
@@ -165,6 +172,66 @@ DeviceContext::~DeviceContext()
         hid_close(hid);
         hid = nullptr;
     }
+}
+
+AsyncWorkerQueue::~AsyncWorkerQueue()
+{
+    // Backstop; anything queued at this point can never be started
+    DrainQueue();
+}
+
+void AsyncWorkerQueue::DrainQueue()
+{
+    // Take the jobs out under the lock, but delete them outside it: deleting a worker
+    // can release the last shared_ptr to another DeviceContext, recursing into that
+    // queue's destructor/DrainQueue
+    std::queue<Napi::AsyncWorker *> jobs;
+    {
+        std::unique_lock<std::mutex> lock(jobQueueMutex);
+        jobQueue.swap(jobs);
+    }
+
+    while (!jobs.empty())
+    {
+        // These were never queued with napi, so they must be deleted manually
+        delete jobs.front();
+        jobs.pop();
+    }
+}
+
+void ContextState::RegisterDevice(const std::shared_ptr<DeviceContext> &device)
+{
+    std::unique_lock<std::mutex> lock(devicesMutex);
+
+    // Prune any devices which have already been freed, to stop the list growing unboundedly
+    devices.erase(
+        std::remove_if(devices.begin(), devices.end(), [](const std::weak_ptr<DeviceContext> &weak)
+                       { return weak.expired(); }),
+        devices.end());
+
+    devices.push_back(device);
+}
+
+void ContextState::DrainAllQueues()
+{
+    std::vector<std::shared_ptr<DeviceContext>> liveDevices;
+    {
+        std::unique_lock<std::mutex> lock(devicesMutex);
+        for (auto &weak : devices)
+        {
+            if (auto device = weak.lock())
+                liveDevices.push_back(std::move(device));
+        }
+        devices.clear();
+    }
+
+    for (auto &device : liveDevices)
+        device->DrainQueue();
+
+    DrainQueue();
+
+    // When liveDevices goes out of scope, any DeviceContext whose last reference was
+    // held by a queued worker is freed, closing its hid handle
 }
 
 void AsyncWorkerQueue::QueueJob(const Napi::Env &, Napi::AsyncWorker *job)

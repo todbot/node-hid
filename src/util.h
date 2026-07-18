@@ -5,6 +5,8 @@
 #include <napi.h>
 
 #include <queue>
+#include <vector>
+#include <memory>
 
 #include <hidapi.h>
 
@@ -37,11 +39,9 @@ public:
 
 class AsyncWorkerQueue
 {
-    // TODO - discard the jobQueue in a safe manner
-    // there should be a destructor which ensures that the queue is empty
-    // when we 'unref' it from the parent, we should mark it as dead, and tell any remaining workers to abort
-
 public:
+    ~AsyncWorkerQueue();
+
     /**
      * Push a job onto the queue.
      * Note: This must only be run from the main thread
@@ -54,11 +54,22 @@ public:
      */
     void JobFinished(const Napi::Env &);
 
+    /**
+     * Delete any jobs which are queued but have not been started.
+     * The currently running job (if any) is left alone; it owns its own destruction.
+     * Their promises are never settled - this is only for env teardown, where no JS
+     * will run again to observe a settlement.
+     * Note: This must only be run from the main thread
+     */
+    void DrainQueue();
+
 private:
     bool isRunning = false;
     std::queue<Napi::AsyncWorker *> jobQueue;
     std::mutex jobQueueMutex;
 };
+
+class DeviceContext;
 
 /**
  * Context-wide shared state.
@@ -74,6 +85,25 @@ public:
 
     // Constructor for the HIDAsync class
     Napi::FunctionReference asyncCtor;
+
+    /**
+     * Track a DeviceContext created for this env, so that its job queue can be
+     * drained at env teardown.
+     * Note: This must only be run from the main thread
+     */
+    void RegisterDevice(const std::shared_ptr<DeviceContext> &device);
+
+    /**
+     * Drain this queue and the queue of every still-live registered DeviceContext.
+     * Deleting the queued workers releases their shared_ptr references, breaking the
+     * queue<->worker cycle so the DeviceContext (and its hid handle) can be freed.
+     * Called from the env cleanup hook; must only be run from the main thread
+     */
+    void DrainAllQueues();
+
+private:
+    std::mutex devicesMutex;
+    std::vector<std::weak_ptr<DeviceContext>> devices;
 };
 
 class DeviceContext : public AsyncWorkerQueue
@@ -117,8 +147,25 @@ public:
     {
         Napi::Env env = Env();
 
-        // Collect the result before finishing the job, in case the result relies on the hid object
-        Napi::Value result = GetPromiseResult(env);
+        // Collect the result before finishing the job, in case the result relies on the hid object.
+        // A throw from GetPromiseResult must not skip JobFinished, or the queue stalls forever
+        Napi::Value result;
+        try
+        {
+            result = GetPromiseResult(env);
+        }
+        catch (const Napi::Error &e)
+        {
+            context->JobFinished(env);
+            deferred.Reject(e.Value());
+            return;
+        }
+        catch (const std::exception &e)
+        {
+            context->JobFinished(env);
+            deferred.Reject(Napi::Error::New(env, e.what()).Value());
+            return;
+        }
 
         context->JobFinished(env);
 
@@ -131,6 +178,23 @@ public:
 
         context->JobFinished(Env());
         deferred.Reject(errorResult.Value());
+    }
+
+    void OnWorkComplete(Napi::Env env, napi_status status) override
+    {
+        try
+        {
+            Napi::AsyncWorker::OnWorkComplete(env, status);
+        }
+        catch (...)
+        {
+            // The env is terminating (eg worker_threads terminate()), so settling the
+            // promise failed and rethrowing into JS also failed, skipping the internal
+            // Destroy(). Without this catch the exception escapes into libuv and aborts
+            // the whole process. Nothing can observe the promise now; just make sure
+            // this worker is still freed
+            Destroy();
+        }
     }
 
     Napi::Promise QueueAndRun()

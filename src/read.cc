@@ -2,9 +2,12 @@
 
 struct ReadCallbackContext;
 
+#include <memory>
+
 struct ReadCallbackProps
 {
-    unsigned char *buf;
+    // Adopted from the read loop; freed with the struct
+    std::unique_ptr<unsigned char[]> buf;
     int len;
 };
 
@@ -36,17 +39,15 @@ void ReadCallback(Napi::Env env, Napi::Function callback, Context *context, Data
         }
         else
         {
-            auto buffer = Napi::Buffer<unsigned char>::Copy(env, data->buf, data->len);
+            // Copying this buffer is a bit excessive for nodejs, but necessary for electron
+            // It should be cheap enough, as read data is usually in the scale of a handful of bytes
+            auto buffer = Napi::Buffer<unsigned char>::Copy(env, data->buf.get(), data->len);
 
             callback.Call({env.Null(), buffer});
         }
     }
 
-    if (data != nullptr)
-    {
-        delete data->buf;
-        delete data;
-    }
+    delete data;
 };
 
 bool ReadThreadState::is_running()
@@ -91,44 +92,11 @@ std::shared_ptr<ReadThreadState> start_read_helper(Napi::Env env, std::shared_pt
     context->state = state;
     context->_hidHandle = std::move(hidHandle);
 
-    context->read_thread = std::thread([context]()
-                                       {
-                              int mswait = 50;
-                              int len = 0;
-                              unsigned char *buf = new unsigned char[READ_BUFF_MAXSIZE];
-
-                              while (!context->state->abort)
-                              {
-                                len = hid_read_timeout(context->_hidHandle->hid, buf, READ_BUFF_MAXSIZE, mswait);
-                                if (context->state->abort)
-                                    break;
-
-                                if (len < 0)
-                                {
-                                    // Emit and error and stop reading
-                                    context->read_callback.BlockingCall(nullptr);
-                                    break;
-                                }
-                                else if (len > 0)
-                                {
-                                    auto data = new ReadCallbackProps;
-                                    data->buf = buf;
-                                    data->len = len;
-
-                                    context->read_callback.BlockingCall(data);
-                                    // buf is now owned by ReadCallback
-                                    buf = new unsigned char[READ_BUFF_MAXSIZE];
-                                }
-                              }
-
-                              delete[] buf;
-
-                              // Mark the state and used hidHandle as released
-                              context->state->release();
-
-                              // Cleanup the function
-                              context->read_callback.Release(); });
-
+    // The tsfn must be created before the thread is spawned, as the thread uses it
+    // immediately (a dead device makes the first hid_read_timeout return instantly).
+    // The reverse ordering is safe: the finalizer (which joins read_thread) can only run
+    // on this thread via the event loop, so not before this function has returned and
+    // read_thread has been assigned. An early Release() by the thread merely queues it.
     context->read_callback = TSFN::New(
         env,
         callback,                                 // JavaScript function called asynchronously
@@ -146,6 +114,51 @@ std::shared_ptr<ReadThreadState> start_read_helper(Napi::Env env, std::shared_pt
             // Free the context
             delete context;
         });
+
+    context->read_thread = std::thread([context]()
+                                       {
+                              int mswait = 50;
+                              int len = 0;
+                              auto buf = std::unique_ptr<unsigned char[]>(new unsigned char[READ_BUFF_MAXSIZE]);
+                              bool tsfn_usable = true;
+
+                              while (!context->state->abort)
+                              {
+                                len = hid_read_timeout(context->_hidHandle->hid, buf.get(), READ_BUFF_MAXSIZE, mswait);
+                                if (context->state->abort)
+                                    break;
+
+                                if (len < 0)
+                                {
+                                    // Emit an error and stop reading
+                                    napi_status status = context->read_callback.BlockingCall(nullptr);
+                                    if (status == napi_closing)
+                                        tsfn_usable = false;
+                                    break;
+                                }
+                                else if (len > 0)
+                                {
+                                    auto data = new ReadCallbackProps{std::move(buf), len};
+                                    buf = std::unique_ptr<unsigned char[]>(new unsigned char[READ_BUFF_MAXSIZE]);
+
+                                    napi_status status = context->read_callback.BlockingCall(data);
+                                    if (status != napi_ok)
+                                    {
+                                        // The call was not queued, so ReadCallback will never free data
+                                        delete data;
+                                        if (status == napi_closing)
+                                            tsfn_usable = false;
+                                        break;
+                                    }
+                                }
+                              }
+
+                              // Mark the state and used hidHandle as released
+                              context->state->release();
+
+                              // Cleanup the function. After napi_closing the tsfn must not be touched again.
+                              if (tsfn_usable)
+                                  context->read_callback.Release(); });
 
     return state;
 }

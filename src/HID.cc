@@ -78,13 +78,6 @@ HID::HID(const Napi::CallbackInfo &info)
     }
   }
 
-#if defined(__APPLE__)
-  hid_darwin_set_open_exclusive(isNonExclusiveBool ? 0 : 1);
-#else
-  // silence unused variable warning
-  (void)isNonExclusiveBool;
-#endif
-
   if (argsLength == 1)
   {
     // open by path
@@ -97,6 +90,14 @@ HID::HID(const Napi::CallbackInfo &info)
     std::string path = info[0].As<Napi::String>().Utf8Value();
     {
       std::unique_lock<std::mutex> lock(appCtx->enumerateLock);
+#if defined(__APPLE__)
+      // The exclusivity flag is process-global, so it must be applied while holding
+      // the lock that serializes all open calls
+      hid_darwin_set_open_exclusive(isNonExclusiveBool ? 0 : 1);
+#else
+      // silence unused variable warning
+      (void)isNonExclusiveBool;
+#endif
       _hidHandle = hid_open_path(path.c_str());
     }
 
@@ -110,12 +111,24 @@ HID::HID(const Napi::CallbackInfo &info)
   }
   else
   {
+    if (!info[0].IsNumber() || !info[1].IsNumber())
+    {
+      Napi::TypeError::New(env, "VendorId and ProductId must be integers").ThrowAsJavaScriptException();
+      return;
+    }
+
     int32_t vendorId = info[0].As<Napi::Number>().Int32Value();
     int32_t productId = info[1].As<Napi::Number>().Int32Value();
     std::wstring wserialstr;
     const wchar_t *wserialptr = nullptr;
     if (argsLength > 2)
     {
+      if (!info[2].IsString())
+      {
+        Napi::TypeError::New(env, "Serial must be a string").ThrowAsJavaScriptException();
+        return;
+      }
+
       std::string serialstr = info[2].As<Napi::String>().Utf8Value();
       wserialstr = utf8_decode(serialstr);
       wserialptr = wserialstr.c_str();
@@ -123,6 +136,12 @@ HID::HID(const Napi::CallbackInfo &info)
 
     {
       std::unique_lock<std::mutex> lock(appCtx->enumerateLock);
+#if defined(__APPLE__)
+      hid_darwin_set_open_exclusive(isNonExclusiveBool ? 0 : 1);
+#else
+      // silence unused variable warning
+      (void)isNonExclusiveBool;
+#endif
       _hidHandle = hid_open(vendorId, productId, wserialptr);
     }
 
@@ -161,11 +180,8 @@ public:
   // This code will be executed on the worker thread
   void Execute() override
   {
-    if (_hid->_readRunning.exchange(true))
-    {
-      SetError("read is already running");
-      return;
-    }
+    // _readRunning was already set by HID::read on the main thread, which
+    // guarantees close() refuses while this worker is pending or running
 
     int mswait = 50;
     while (len == 0 && !_hid->_readInterrupt && _hid->_hidHandle != nullptr)
@@ -186,6 +202,21 @@ public:
     Callback().Call({Env().Null(), buffer});
   }
 
+  void OnWorkComplete(Napi::Env env, napi_status status) override
+  {
+    try
+    {
+      Napi::AsyncWorker::OnWorkComplete(env, status);
+    }
+    catch (...)
+    {
+      // The env is terminating, so the callback cannot be invoked and rethrowing into
+      // JS failed, skipping the internal Destroy(). Nothing can observe the callback
+      // now; just make sure this worker is still freed
+      Destroy();
+    }
+  }
+
 private:
   HID *_hid;
   unsigned char *buf = new unsigned char[READ_BUFF_MAXSIZE];
@@ -199,6 +230,20 @@ Napi::Value HID::read(const Napi::CallbackInfo &info)
   if (info.Length() != 1 || !info[0].IsFunction())
   {
     Napi::TypeError::New(env, "need one callback function argument in read").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  if (!_hidHandle)
+  {
+    Napi::TypeError::New(env, "Cannot access closed device").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Claim the read flag here on the main thread, not in the worker, so that
+  // close() cannot free the handle while a queued worker has yet to start
+  if (this->_readRunning.exchange(true))
+  {
+    Napi::TypeError::New(env, "read is already running").ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -303,9 +348,9 @@ Napi::Value HID::getFeatureReport(const Napi::CallbackInfo &info)
 
   const uint8_t reportId = info[0].As<Napi::Number>().Uint32Value();
   const int bufSize = info[1].As<Napi::Number>().Uint32Value();
-  if (bufSize == 0)
+  if (bufSize <= 0)
   {
-    Napi::TypeError::New(env, "Length parameter cannot be zero in getFeatureReport").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, "Length parameter must be greater than zero in getFeatureReport").ThrowAsJavaScriptException();
     return env.Null();
   }
 
