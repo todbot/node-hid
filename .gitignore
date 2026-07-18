@@ -6,6 +6,7 @@ Release/
 prebuilds/
 *.tgz
 yarn.lock
+package-lock.json
 *.log
 scratch/
 .vscode/

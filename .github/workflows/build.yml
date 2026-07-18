@@ -27,15 +27,15 @@ jobs:
           - os: windows-latest
             arch: x64
             is-native: true
-            node-version: 20.x # python compatibility
+            node-version: 24.x # node-gyp 12.1+ is needed to detect Visual Studio 2026
           - os: windows-latest
             arch: ia32
             is-native: false
-            node-version: 20.x # python compatibility
+            node-version: 24.x # node-gyp 12.1+ is needed to detect Visual Studio 2026
           - os: windows-11-arm
             arch: arm64
             is-native: true
-            node-version: 20.x # 16.x is missing the arm64 node.lib
+            node-version: 24.x # node-gyp 12.1+ is needed to detect Visual Studio 2026
           # macos
           - os: macos-latest
             arch: arm64
@@ -91,14 +91,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version || '16.x' }}
-
-      - name: Update node-gyp
-        # the node-gyp bundled with npm in node 20 is too old to detect Visual Studio 2026 (v18)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          npm install --global node-gyp@latest
-          echo "npm_config_node_gyp=$(npm prefix -g)/node_modules/node-gyp/bin/node-gyp.js" >> $GITHUB_ENV
 
       - name: rebuild
         if: ${{ !matrix.docker-arch }}
