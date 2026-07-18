@@ -28,6 +28,7 @@
                     ],
                     'xcode_settings': {
                         'CLANG_CXX_LIBRARY': 'libc++',
+                        'CLANG_CXX_LANGUAGE_STANDARD': 'c++17',
                         'MACOSX_DEPLOYMENT_TARGET': '10.9',
                         'GCC_ENABLE_CPP_EXCEPTIONS': 'YES',
                         'OTHER_LDFLAGS': [
@@ -65,7 +66,7 @@
             'cflags!': ['-ansi', '-fno-exceptions' ],
             'cflags_cc!': [ '-fno-exceptions' ],
             'cflags': ['-g', '-exceptions'],
-            'cflags_cc': ['-g', '-exceptions']
+            'cflags_cc': ['-g', '-exceptions', '-std=c++17']
         }, # target HID
 
         {
@@ -152,7 +153,7 @@
                     'cflags!': ['-ansi', '-fno-exceptions' ],
                     'cflags_cc!': [ '-fno-exceptions' ],
                     'cflags': ['-g', '-exceptions'],
-                    'cflags_cc': ['-g', '-exceptions']
+                    'cflags_cc': ['-g', '-exceptions', '-std=c++17']
                 }, # target 'HID-hidraw'
 
                 {
