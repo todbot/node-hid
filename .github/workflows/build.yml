@@ -92,6 +92,14 @@ jobs:
         with:
           node-version: ${{ matrix.node-version || '16.x' }}
 
+      - name: Update node-gyp
+        # the node-gyp bundled with npm in node 20 is too old to detect Visual Studio 2026 (v18)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          npm install --global node-gyp@latest
+          echo "npm_config_node_gyp=$(npm prefix -g)/node_modules/node-gyp/bin/node-gyp.js" >> $GITHUB_ENV
+
       - name: rebuild
         if: ${{ !matrix.docker-arch }}
         shell: bash
