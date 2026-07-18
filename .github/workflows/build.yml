@@ -111,7 +111,7 @@ jobs:
             npm test
           fi
 
-          npm run rebuild --arch=${{ matrix.arch }}
+          npm run rebuild -- --arch=${{ matrix.arch }}
           npx pkg-prebuilds-copy --baseDir build/Release --source $BINDING_NAME.node --name=$BINDING_NAME --strip --napi_version=$NAPI_VERSION --arch=${{ matrix.arch }}
 
           if [ -f "build/Release/$BINDING_NAME_HIDRAW.node" ]; then
