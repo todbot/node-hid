@@ -16,6 +16,22 @@ std::wstring u16_to_wide(const std::u16string &in);
 std::u16string wide_to_u16(const std::wstring &in);
 
 /**
+ * Build an error message for a failed hidapi call, appending the reason
+ * reported by hid_error (if any).
+ * Pass nullptr as the device to read the global error (for hid_init/hid_open failures).
+ * Note: not valid for hid_read/hid_read_timeout failures, use appendLastHidReadError
+ */
+std::string appendLastHidError(hid_device *hid, std::string message);
+
+/**
+ * Build an error message for a failed hid_read/hid_read_timeout call, appending
+ * the reason reported by hid_read_error (if any). Reads record their errors in a
+ * separate per-handle slot (they run concurrently with other operations), so
+ * hid_error would report an unrelated, stale reason for them
+ */
+std::string appendLastHidReadError(hid_device *hid, std::string message);
+
+/**
  * Convert a js value (either a buffer ot array of numbers) into a vector of bytes.
  * Returns a non-empty string upon failure
  */

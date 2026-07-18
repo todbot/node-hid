@@ -88,6 +88,7 @@ HID::HID(const Napi::CallbackInfo &info)
     }
 
     std::string path = info[0].As<Napi::String>().Utf8Value();
+    std::string openError;
     {
       std::unique_lock<std::mutex> lock(appCtx->enumerateLock);
 #if defined(__APPLE__)
@@ -99,13 +100,15 @@ HID::HID(const Napi::CallbackInfo &info)
       (void)isNonExclusiveBool;
 #endif
       _hidHandle = hid_open_path(path.c_str());
+      if (!_hidHandle)
+      {
+        openError = appendLastHidError(nullptr, "cannot open device with path " + path);
+      }
     }
 
     if (!_hidHandle)
     {
-      std::ostringstream os;
-      os << "cannot open device with path " << path;
-      Napi::TypeError::New(env, os.str()).ThrowAsJavaScriptException();
+      Napi::TypeError::New(env, openError).ThrowAsJavaScriptException();
       return;
     }
   }
@@ -134,6 +137,7 @@ HID::HID(const Napi::CallbackInfo &info)
       wserialptr = wserialstr.c_str();
     }
 
+    std::string openError;
     {
       std::unique_lock<std::mutex> lock(appCtx->enumerateLock);
 #if defined(__APPLE__)
@@ -143,13 +147,17 @@ HID::HID(const Napi::CallbackInfo &info)
       (void)isNonExclusiveBool;
 #endif
       _hidHandle = hid_open(vendorId, productId, wserialptr);
+      if (!_hidHandle)
+      {
+        std::ostringstream os;
+        os << "cannot open device with vendor id 0x" << std::hex << vendorId << " and product id 0x" << productId;
+        openError = appendLastHidError(nullptr, os.str());
+      }
     }
 
     if (!_hidHandle)
     {
-      std::ostringstream os;
-      os << "cannot open device with vendor id 0x" << std::hex << vendorId << " and product id 0x" << productId;
-      Napi::TypeError::New(env, os.str()).ThrowAsJavaScriptException();
+      Napi::TypeError::New(env, openError).ThrowAsJavaScriptException();
       return;
     }
   }
@@ -190,7 +198,7 @@ public:
     }
     if (len <= 0)
     {
-      SetError("could not read from HID device");
+      SetError(appendLastHidReadError(_hid->_hidHandle, "could not read from HID device"));
     }
 
     _hid->_readRunning = false;
@@ -285,7 +293,7 @@ Napi::Value HID::readSync(const Napi::CallbackInfo &info)
   int returnedLength = hid_read(_hidHandle, buff_read, sizeof buff_read);
   if (returnedLength == -1)
   {
-    Napi::TypeError::New(env, "could not read data from device").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidReadError(_hidHandle, "could not read data from device")).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -318,7 +326,7 @@ Napi::Value HID::readTimeout(const Napi::CallbackInfo &info)
   int returnedLength = hid_read_timeout(_hidHandle, buff_read, sizeof buff_read, timeout);
   if (returnedLength == -1)
   {
-    Napi::TypeError::New(env, "could not read data from device").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidReadError(_hidHandle, "could not read data from device")).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -360,7 +368,7 @@ Napi::Value HID::getFeatureReport(const Napi::CallbackInfo &info)
   int returnedLength = hid_get_feature_report(_hidHandle, buf.data(), bufSize);
   if (returnedLength == -1)
   {
-    Napi::TypeError::New(env, "could not get feature report from device").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidError(_hidHandle, "could not get feature report from device")).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -399,7 +407,7 @@ Napi::Value HID::sendFeatureReport(const Napi::CallbackInfo &info)
   int returnedLength = hid_send_feature_report(_hidHandle, message.data(), message.size());
   if (returnedLength == -1)
   { // Not sure if there would ever be a valid return value of 0.
-    Napi::TypeError::New(env, "could not send feature report to device").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidError(_hidHandle, "could not send feature report to device")).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -440,7 +448,7 @@ Napi::Value HID::setNonBlocking(const Napi::CallbackInfo &info)
   int res = hid_set_nonblocking(_hidHandle, blockStatus);
   if (res < 0)
   {
-    Napi::TypeError::New(env, "Error setting non-blocking mode.").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidError(_hidHandle, "Error setting non-blocking mode")).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -474,7 +482,7 @@ Napi::Value HID::write(const Napi::CallbackInfo &info)
   int returnedLength = hid_write(_hidHandle, message.data(), message.size());
   if (returnedLength < 0)
   {
-    Napi::TypeError::New(env, "Cannot write to hid device").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidError(_hidHandle, "Cannot write to hid device")).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -494,7 +502,7 @@ Napi::Value HID::getDeviceInfo(const Napi::CallbackInfo &info)
   hid_device_info *dev = hid_get_device_info(_hidHandle);
   if (!dev)
   {
-    Napi::TypeError::New(env, "Unable to get device info").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, appendLastHidError(_hidHandle, "Unable to get device info")).ThrowAsJavaScriptException();
     return env.Null();
   }
 

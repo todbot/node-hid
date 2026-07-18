@@ -1,5 +1,6 @@
 #include <sstream>
 #include <algorithm>
+#include <cwchar>
 
 #include "util.h"
 
@@ -130,6 +131,39 @@ std::u16string wide_to_u16(const std::wstring &in)
         }
         return out;
     }
+}
+
+static std::string appendHidErrorString(const wchar_t *err, std::string message)
+{
+    // hidapi reports L"Success" when the last call did not record an error detail
+    if (err && *err && std::wcscmp(err, L"Success") != 0)
+    {
+        message.reserve(message.size() + 2 + std::wcslen(err));
+        message += ": ";
+
+        // hid_error strings are debug/log text and ascii in practice (fixed english
+        // messages, or strerror under the default locale). Anything wider is not
+        // worth carrying proper conversion machinery for; flatten it lossily
+        for (const wchar_t *c = err; *c; c++)
+        {
+            message += (*c >= 0x20 && *c < 0x7F) ? (char)*c : '?';
+        }
+    }
+    return message;
+}
+
+std::string appendLastHidError(hid_device *hid, std::string message)
+{
+    return appendHidErrorString(hid_error(hid), std::move(message));
+}
+
+std::string appendLastHidReadError(hid_device *hid, std::string message)
+{
+    // Unlike hid_error, hid_read_error has no global fallback
+    if (!hid)
+        return message;
+
+    return appendHidErrorString(hid_read_error(hid), std::move(message));
 }
 
 std::string copyArrayOrBufferIntoVector(const Napi::Value &val, std::vector<unsigned char> &message)

@@ -141,9 +141,7 @@ public:
     dev = hid_open_path(path.c_str());
     if (!dev)
     {
-      std::ostringstream os;
-      os << "cannot open device with path " << path;
-      SetError(os.str());
+      SetError(appendLastHidError(nullptr, "cannot open device with path " + path));
     }
   }
 
@@ -203,7 +201,7 @@ public:
     {
       std::ostringstream os;
       os << "cannot open device with vendor id 0x" << std::hex << vendorId << " and product id 0x" << productId;
-      SetError(os.str());
+      SetError(appendLastHidError(nullptr, os.str()));
     }
   }
 
@@ -421,7 +419,7 @@ public:
 
       if (returnedLength < 0)
       {
-        SetError("could not read data from device");
+        SetError(appendLastHidReadError(context->hid, "could not read data from device"));
       }
     }
     else
@@ -506,7 +504,7 @@ public:
       bufferLength = hid_get_feature_report(context->hid, buffer, bufferLength);
       if (bufferLength < 0)
       {
-        SetError("could not get feature report from device");
+        SetError(appendLastHidError(context->hid, "could not get feature report from device"));
       }
     }
     else
@@ -572,7 +570,7 @@ public:
       written = hid_send_feature_report(context->hid, srcBuffer.data(), srcBuffer.size());
       if (written < 0)
       {
-        SetError("could not send feature report to device");
+        SetError(appendLastHidError(context->hid, "could not send feature report to device"));
       }
     }
     else
@@ -660,7 +658,7 @@ public:
       int res = hid_set_nonblocking(context->hid, mode);
       if (res < 0)
       {
-        SetError("Error setting non-blocking mode.");
+        SetError(appendLastHidError(context->hid, "Error setting non-blocking mode"));
       }
     }
     else
@@ -717,7 +715,7 @@ public:
       written = hid_write(context->hid, srcBuffer.data(), srcBuffer.size());
       if (written < 0)
       {
-        SetError("Cannot write to hid device");
+        SetError(appendLastHidError(context->hid, "Cannot write to hid device"));
       }
     }
     else
@@ -779,7 +777,7 @@ public:
       dev = hid_get_device_info(context->hid);
       if (!dev)
       {
-        SetError("Unable to get device info");
+        SetError(appendLastHidError(context->hid, "Unable to get device info"));
       }
     }
     else

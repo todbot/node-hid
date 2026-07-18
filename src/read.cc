@@ -9,6 +9,9 @@ struct ReadCallbackProps
     // Adopted from the read loop; freed with the struct
     std::unique_ptr<unsigned char[]> buf;
     int len;
+    // Set when len < 0: the reason reported by hid_read_error, captured on the
+    // read thread while it is still fresh
+    std::string error;
 };
 
 using Context = ReadCallbackContext;
@@ -31,9 +34,9 @@ void ReadCallback(Napi::Env env, Napi::Function callback, Context *context, Data
 {
     if (env != nullptr && callback != nullptr) //&& context != nullptr)
     {
-        if (data == nullptr)
+        if (data == nullptr || data->len < 0)
         {
-            auto error = Napi::String::New(env, "could not read from HID device");
+            auto error = Napi::String::New(env, data != nullptr ? data->error : "could not read from HID device");
 
             callback.Call({error, env.Null()});
         }
@@ -131,14 +134,23 @@ std::shared_ptr<ReadThreadState> start_read_helper(Napi::Env env, std::shared_pt
                                 if (len < 0)
                                 {
                                     // Emit an error and stop reading
-                                    napi_status status = context->read_callback.BlockingCall(nullptr);
-                                    if (status == napi_closing)
-                                        tsfn_usable = false;
+                                    auto data = new ReadCallbackProps{
+                                        nullptr, len,
+                                        appendLastHidReadError(context->_hidHandle->hid, "could not read from HID device")};
+
+                                    napi_status status = context->read_callback.BlockingCall(data);
+                                    if (status != napi_ok)
+                                    {
+                                        // The call was not queued, so ReadCallback will never free data
+                                        delete data;
+                                        if (status == napi_closing)
+                                            tsfn_usable = false;
+                                    }
                                     break;
                                 }
                                 else if (len > 0)
                                 {
-                                    auto data = new ReadCallbackProps{std::move(buf), len};
+                                    auto data = new ReadCallbackProps{std::move(buf), len, {}};
                                     buf = std::unique_ptr<unsigned char[]>(new unsigned char[READ_BUFF_MAXSIZE]);
 
                                     napi_status status = context->read_callback.BlockingCall(data);
