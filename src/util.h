@@ -12,8 +12,8 @@
 
 #define READ_BUFF_MAXSIZE 2048
 
-std::string utf8_encode(const std::wstring &source);
-std::wstring utf8_decode(const std::string &source);
+std::wstring u16_to_wide(const std::u16string &in);
+std::u16string wide_to_u16(const std::wstring &in);
 
 /**
  * Convert a js value (either a buffer ot array of numbers) into a vector of bytes.

@@ -56,6 +56,7 @@
                         'VCCLCompilerTool': {
                             'ExceptionHandling': '2', # /EHsc
                             'DisableSpecificWarnings': [ '4290', '4530', '4267' ],
+                            'AdditionalOptions': ['-std:c++17'],
                         },
                         'VCLinkerTool': {
                             'AdditionalDependencies': ['setupapi.lib']

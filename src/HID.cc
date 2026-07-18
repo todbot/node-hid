@@ -129,8 +129,8 @@ HID::HID(const Napi::CallbackInfo &info)
         return;
       }
 
-      std::string serialstr = info[2].As<Napi::String>().Utf8Value();
-      wserialstr = utf8_decode(serialstr);
+      auto serialstr = info[2].As<Napi::String>().Utf16Value();
+      wserialstr = u16_to_wide(serialstr);
       wserialptr = wserialstr.c_str();
     }
 

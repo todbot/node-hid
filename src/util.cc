@@ -45,88 +45,91 @@ std::shared_ptr<ApplicationContext> ApplicationContext::get()
     return ref;
 }
 
-std::string utf8_encode(const std::wstring &source)
+// wchar_t is 2 bytes (UTF-16) on Windows, 4 bytes (UTF-32) on POSIX.
+// Anything else is unsupported — fail loudly at compile time rather than
+// corrupting text at runtime.
+static_assert(sizeof(wchar_t) == 2 || sizeof(wchar_t) == 4,
+              "Unsupported wchar_t size: expected 2 (Windows) or 4 (POSIX)");
+
+// std::u16string (from N-API's Utf16Value) -> std::wstring (for hidapi input)
+std::wstring u16_to_wide(const std::u16string &in)
 {
-    std::string result;
-    for (size_t i = 0; i < source.size(); ) {
-        uint32_t cp;
-        wchar_t wc = source[i++];
-#ifdef _WIN32
-        // wchar_t is UTF-16 on Windows; handle surrogate pairs
-        if (wc >= 0xD800 && wc <= 0xDBFF && i < source.size()) {
-            wchar_t wc2 = source[i];
-            if (wc2 >= 0xDC00 && wc2 <= 0xDFFF) {
-                cp = 0x10000u + ((static_cast<uint32_t>(wc - 0xD800) << 10) | (wc2 - 0xDC00));
-                i++;
-            } else {
-                cp = static_cast<uint32_t>(wc);
-            }
-        } else {
-            cp = static_cast<uint32_t>(wc);
-        }
-#else
-        cp = static_cast<uint32_t>(wc);
-#endif
-        if (cp < 0x80u) {
-            result += static_cast<char>(cp);
-        } else if (cp < 0x800u) {
-            result += static_cast<char>(0xC0u | (cp >> 6));
-            result += static_cast<char>(0x80u | (cp & 0x3Fu));
-        } else if (cp < 0x10000u) {
-            result += static_cast<char>(0xE0u | (cp >> 12));
-            result += static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
-            result += static_cast<char>(0x80u | (cp & 0x3Fu));
-        } else {
-            result += static_cast<char>(0xF0u | (cp >> 18));
-            result += static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu));
-            result += static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
-            result += static_cast<char>(0x80u | (cp & 0x3Fu));
-        }
+    if constexpr (sizeof(wchar_t) == 2)
+    {
+        // Windows: char16_t and wchar_t are the same UTF-16 code units.
+        return std::wstring(in.begin(), in.end());
     }
-    return result;
+    else
+    {
+        // POSIX: combine surrogate pairs into UTF-32 code points.
+        std::wstring out;
+        out.reserve(in.size());
+        size_t i = 0, n = in.size();
+        while (i < n)
+        {
+            uint32_t cp = in[i];
+            if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < n)
+            {
+                uint32_t lo = in[i + 1];
+                if (lo >= 0xDC00 && lo <= 0xDFFF)
+                {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    i += 2;
+                }
+                else
+                {
+                    cp = 0xFFFD; // high surrogate not followed by low
+                    i += 1;
+                }
+            }
+            else if (cp >= 0xD800 && cp <= 0xDFFF)
+            {
+                cp = 0xFFFD; // lone surrogate
+                i += 1;
+            }
+            else
+            {
+                i += 1;
+            }
+            out.push_back((wchar_t)cp);
+        }
+        return out;
+    }
 }
 
-std::wstring utf8_decode(const std::string &source)
+// std::wstring (from hidapi output) -> std::u16string (for N-API's String::New)
+std::u16string wide_to_u16(const std::wstring &in)
 {
-    std::wstring result;
-    size_t i = 0;
-    while (i < source.size()) {
-        auto c = static_cast<unsigned char>(source[i]);
-        uint32_t cp;
-        if (c < 0x80u) {
-            cp = c; i++;
-        } else if ((c & 0xE0u) == 0xC0u && i + 1 < source.size()) {
-            cp = (static_cast<uint32_t>(c & 0x1Fu) << 6)
-               |  static_cast<uint32_t>(static_cast<unsigned char>(source[i+1]) & 0x3Fu);
-            i += 2;
-        } else if ((c & 0xF0u) == 0xE0u && i + 2 < source.size()) {
-            cp = (static_cast<uint32_t>(c & 0x0Fu) << 12)
-               | (static_cast<uint32_t>(static_cast<unsigned char>(source[i+1]) & 0x3Fu) << 6)
-               |  static_cast<uint32_t>(static_cast<unsigned char>(source[i+2]) & 0x3Fu);
-            i += 3;
-        } else if ((c & 0xF8u) == 0xF0u && i + 3 < source.size()) {
-            cp = (static_cast<uint32_t>(c & 0x07u) << 18)
-               | (static_cast<uint32_t>(static_cast<unsigned char>(source[i+1]) & 0x3Fu) << 12)
-               | (static_cast<uint32_t>(static_cast<unsigned char>(source[i+2]) & 0x3Fu) << 6)
-               |  static_cast<uint32_t>(static_cast<unsigned char>(source[i+3]) & 0x3Fu);
-            i += 4;
-        } else {
-            i++; continue; // invalid byte, skip
-        }
-#ifdef _WIN32
-        // wchar_t is UTF-16 on Windows; emit surrogate pair if needed
-        if (cp >= 0x10000u) {
-            cp -= 0x10000u;
-            result += static_cast<wchar_t>(0xD800u + (cp >> 10));
-            result += static_cast<wchar_t>(0xDC00u + (cp & 0x3FFu));
-        } else {
-            result += static_cast<wchar_t>(cp);
-        }
-#else
-        result += static_cast<wchar_t>(cp);
-#endif
+    if constexpr (sizeof(wchar_t) == 2)
+    {
+        // Windows: already UTF-16.
+        return std::u16string(in.begin(), in.end());
     }
-    return result;
+    else
+    {
+        // POSIX: split astral code points into surrogate pairs.
+        std::u16string out;
+        out.reserve(in.size());
+        for (wchar_t wc : in)
+        {
+            uint32_t cp = (uint32_t)wc;
+            if (cp <= 0xFFFF)
+            {
+                out.push_back((char16_t)cp);
+            }
+            else if (cp <= 0x10FFFF)
+            {
+                cp -= 0x10000;
+                out.push_back((char16_t)(0xD800 + (cp >> 10)));
+                out.push_back((char16_t)(0xDC00 + (cp & 0x3FF)));
+            }
+            else
+            {
+                out.push_back((char16_t)0xFFFD); // out of Unicode range
+            }
+        }
+        return out;
+    }
 }
 
 std::string copyArrayOrBufferIntoVector(const Napi::Value &val, std::vector<unsigned char> &message)

@@ -163,7 +163,7 @@ private:
 class OpenByUsbIdsWorker : public PromiseAsyncWorker<ContextState *>
 {
 public:
-  OpenByUsbIdsWorker(const Napi::Env &env, ContextState *context, int vendorId, int productId, std::string serial, bool nonExclusive)
+  OpenByUsbIdsWorker(const Napi::Env &env, ContextState *context, int vendorId, int productId, std::u16string serial, bool nonExclusive)
       : PromiseAsyncWorker(env, context),
         vendorId(vendorId),
         productId(productId),
@@ -192,9 +192,9 @@ public:
 
     std::wstring wserialstr;
     const wchar_t *wserialptr = nullptr;
-    if (serial != "")
+    if (!serial.empty())
     {
-      wserialstr = utf8_decode(serial);
+      wserialstr = u16_to_wide(serial);
       wserialptr = wserialstr.c_str();
     }
 
@@ -217,7 +217,7 @@ public:
 private:
   int vendorId;
   int productId;
-  std::string serial;
+  std::u16string serial;
   bool nonExclusive;
   hid_device *dev = nullptr;
 };
@@ -284,7 +284,7 @@ Napi::Value HIDAsync::Create(const Napi::CallbackInfo &info)
       return env.Null();
     }
 
-    std::string serial;
+    std::u16string serial;
     if (argsLength > 2)
     {
       if (!info[2].IsString())
@@ -293,7 +293,7 @@ Napi::Value HIDAsync::Create(const Napi::CallbackInfo &info)
         return env.Null();
       }
 
-      serial = info[2].As<Napi::String>().Utf8Value();
+      serial = info[2].As<Napi::String>().Utf16Value();
     }
 
     int32_t vendorId = info[0].As<Napi::Number>().Int32Value();
