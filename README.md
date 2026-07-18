@@ -488,7 +488,7 @@ Notes:
 
 ### `device.setNonBlocking(no_block)`
 
-- `no_block` - boolean. Set to `true` to enable non-blocking reads
+- `no_block` - boolean (or `1`/`0`). Set to `true` (or `1`) to enable non-blocking reads
 - exactly mirrors `hid_set_nonblocking()` in [`hidapi`](https://github.com/libusb/hidapi)
 
 ## Complete Sync API
@@ -573,7 +573,7 @@ Notes:
 
 ### `device.setNonBlocking(no_block)`
 
-- `no_block` - boolean. Set to `true` to enable non-blocking reads
+- `no_block` - boolean (or `1`/`0`). Set to `true` (or `1`) to enable non-blocking reads
 - exactly mirrors `hid_set_nonblocking()` in [`hidapi`](https://github.com/libusb/hidapi)
 
 ---

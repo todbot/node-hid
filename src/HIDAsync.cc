@@ -692,7 +692,20 @@ Napi::Value HIDAsync::setNonBlocking(const Napi::CallbackInfo &info)
     return env.Null();
   }
 
-  int blockStatus = info[0].As<Napi::Number>().Int32Value();
+  int blockStatus;
+  if (info[0].IsBoolean())
+  {
+    blockStatus = info[0].As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  else if (info[0].IsNumber())
+  {
+    blockStatus = info[0].As<Napi::Number>().Int32Value() ? 1 : 0;
+  }
+  else
+  {
+    Napi::TypeError::New(env, "Expecting a 1 to enable, 0 to disable as the first argument.").ThrowAsJavaScriptException();
+    return env.Null();
+  }
 
   return (new SetNonBlockingWorker(env, _hidHandle, blockStatus))->QueueAndRun();
 }

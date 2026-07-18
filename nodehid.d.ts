@@ -32,7 +32,7 @@ export class HID extends EventEmitter {
     getFeatureReport(report_id: number, report_length: number): number[]
     resume(): void
     write(values: number[] | Buffer): number
-    setNonBlocking(no_block: boolean): void
+    setNonBlocking(no_block: boolean | 0 | 1): void
     getDeviceInfo(): Device
 }
 
@@ -55,7 +55,7 @@ export class HIDAsync extends EventEmitter {
     getFeatureReport(report_id: number, report_length: number): Promise<Buffer>
     resume(): void
     write(values: number[] | Buffer): Promise<number>
-    setNonBlocking(no_block: boolean): Promise<void>
+    setNonBlocking(no_block: boolean | 0 | 1): Promise<void>
     getDeviceInfo(): Promise<Device>
 }
 
